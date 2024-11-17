@@ -1,0 +1,140 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// WiFi credentials
+const char* ssid = "Xiaomi";
+const char* password = "vava123hi";
+
+// API URLs
+const char* floodApiUrl = "https://b844-117-239-79-1.ngrok-free.app/getFloodAlert/SCMS";
+const char* landslideApiUrl = "https://b844-117-239-79-1.ngrok-free.app/getLandSlideAlert/SCMS";
+
+// OLED display configuration
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Buzzer configuration
+#define BUZZER_PIN 26 // Signal pin connected to GPIO 26
+
+// Global Variables
+bool isFloodAlert = false;
+bool isLandslideAlert = false; // Always false as per the requirement
+
+// Function Prototypes
+void connectToWiFi();
+void displayMessage(const String& message);
+void fetchFloodAlert();
+void activateBuzzer(bool state);
+
+void setup() {
+    Serial.begin(115200);
+
+    // Initialize the buzzer pin
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW); // Ensure the buzzer is off initially
+
+    // Initialize the OLED display
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        Serial.println(F("SSD1306 allocation failed"));
+        while (true); // Stop if OLED initialization fails
+    }
+    displayMessage("Connecting to WiFi...");
+    connectToWiFi();
+}
+
+void loop() {
+    if (WiFi.status() == WL_CONNECTED) {
+        fetchFloodAlert();
+
+        // Activate the buzzer only if Flood Alert is true
+        if (isFloodAlert) {
+            activateBuzzer(true);
+        } else {
+            activateBuzzer(false);
+        }
+
+        // Update OLED Display
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.setTextSize(1);
+        display.setTextColor(WHITE);
+        display.print("Flood Alert: ");
+        display.println(isFloodAlert ? "YES" : "NO");
+        display.print("Landslide Alert: ");
+        display.println("NO"); // Always false
+        display.display();
+    } else {
+        displayMessage("WiFi not connected!");
+        Serial.println("WiFi not connected!");
+        activateBuzzer(false); // Ensure buzzer is off when disconnected
+    }
+
+    delay(4000); // Check every 4 seconds
+}
+
+// Function Definitions
+
+void connectToWiFi() {
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nWiFi connected!");
+    displayMessage("WiFi Connected!");
+}
+
+void displayMessage(const String& message) {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.println(message);
+    display.display();
+}
+
+void fetchFloodAlert() {
+    HTTPClient http;
+    http.begin(floodApiUrl); // Set the API URL for Flood Alert
+
+    int httpResponseCode = http.GET(); // Send the GET request
+
+    if (httpResponseCode == 200) { // HTTP OK
+        String payload = http.getString();
+        Serial.println("Flood Alert Response: " + payload);
+
+        // Parse JSON response
+        StaticJsonDocument<256> doc;
+        DeserializationError error = deserializeJson(doc, payload);
+
+        if (!error) {
+            isFloodAlert = doc["data"]["isFloodAlert"]; // Update Flood Alert status
+
+            // Print to Serial Monitor
+            Serial.print("Flood Alert: ");
+            Serial.println(isFloodAlert ? "TRUE" : "FALSE");
+        } else {
+            Serial.println("JSON Parse Error for Flood Alert");
+        }
+    } else {
+        Serial.print("Flood Alert HTTP Error: ");
+        Serial.println(httpResponseCode);
+    }
+
+    http.end(); // Close the HTTP connection
+}
+
+void activateBuzzer(bool state) {
+    if (state) {
+        digitalWrite(BUZZER_PIN, HIGH); // Turn on the buzzer
+    } else {
+        digitalWrite(BUZZER_PIN, LOW);  // Turn off the buzzer
+    }
+}

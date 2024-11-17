@@ -1,0 +1,146 @@
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// WiFi credentials
+const char* ssid = "Xiaomi";       // Replace with your WiFi SSID
+const char* password = "vava123hi"; // Replace with your WiFi Password
+
+// API URLs
+const char* fetchApiUrl = "https://b844-117-239-79-1.ngrok-free.app/getLandSlideAlert/SCMS";
+const char* sendApiUrl = "https://b844-117-239-79-1.ngrok-free.app/sendLandSlideAlert/SCMS";
+
+// Pin definitions
+const int soilMoisturePin = 34; // Soil moisture sensor connected to GPIO 34
+const int raindropPin = 35;      // Raindrop sensor connected to GPIO 35
+
+// Define min and max values for sensors
+const int soilMoistureMin = 0;   // Minimum value for soil moisture
+const int soilMoistureMax = 1023; // Maximum value for soil moisture
+const int raindropMin = 0;        // Minimum value for raindrop sensor
+const int raindropMax = 1023;     // Maximum value for raindrop sensor
+  
+bool isLandSlideAlert = false;
+
+void setup() {
+    Serial.begin(115200); // Start serial communication for debugging
+    WiFi.begin(ssid, password); // Connect to WiFi
+}
+
+void loop() {
+    if (WiFi.status() == WL_CONNECTED) {
+        fetchLandSlideAlert();  // Fetch the landslide alert status from the server
+
+        // Read soil moisture value
+        int soilMoistureValue = analogRead(soilMoisturePin);
+        
+        // Calculate percentage for soil moisture
+        float soilMoisturePercentage = map(soilMoistureValue, soilMoistureMin, soilMoistureMax, 0, 100);
+
+        // Read raindrop sensor value
+        int raindropValue = analogRead(raindropPin);
+        
+        // Calculate percentage for raindrop sensor
+        float raindropPercentage = map(raindropValue, raindropMin, raindropMax, 0, 100);
+
+        // Print the results to the Serial Monitor
+        Serial.print("Soil Moisture Percentage: ");
+        Serial.print(soilMoisturePercentage);
+        Serial.println("%");
+
+        Serial.print("Raindrop Percentage: ");
+        Serial.print(raindropPercentage);
+        Serial.println("%");
+
+        // Check for alerts
+        checkAlert(soilMoisturePercentage, raindropPercentage);
+    } else {
+        Serial.println("WiFi not connected!");
+        displayMessage("WiFi Disconnected");
+    }
+
+    delay(1000); // Delay between readings
+}
+
+void checkAlert(float soilMoisturePercentage, float raindropPercentage) {
+    float average = (soilMoisturePercentage + raindropPercentage) / 2.0;
+    if (average > 30) {
+        Serial.println("Alert: Average sensor value exceeds 30!");
+    } else {
+        // High risk of landslide detected
+        if (!isLandSlideAlert) {
+            isLandSlideAlert = true;
+            sendLandSlideAlert(isLandSlideAlert);
+        } else {
+            displayMessage("POST Skipped\nAlert Already Sent");
+        }
+    }
+}
+
+void fetchLandSlideAlert() {
+    HTTPClient http;
+    http.begin(fetchApiUrl);
+
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode == 200) {
+        String payload = http.getString();
+        Serial.println("Response: " + payload);
+
+        StaticJsonDocument<256> doc;
+        DeserializationError error = deserializeJson(doc, payload);
+
+        if (!error) {
+            isLandSlideAlert = doc["data"]["isLandSlideAlert"];
+            Serial.print("Landslide Alert: ");
+            Serial.println(isLandSlideAlert ? "TRUE" : "FALSE");
+
+            // Display success message
+            displayMessage("GET Request Sent\nLandslide Alert: " + String(isLandSlideAlert ? "TRUE" : "FALSE"));
+        } else {
+            Serial.println("Failed to parse JSON");
+            displayMessage("GET Request Failed\nJSON Error");
+        }
+    } else {
+        Serial.print("HTTP GET failed. Code: ");
+        Serial.println(httpResponseCode);
+        displayMessage("GET Request Failed\nCode: " + String(httpResponseCode));
+    }
+
+    http.end();
+}
+
+void sendLandSlideAlert(bool alertStatus) {
+    HTTPClient http;
+    http.begin(sendApiUrl);
+    http.addHeader("Content-Type", "application/json");
+
+    // Prepare JSON payload
+    StaticJsonDocument<256> doc;
+    doc["isLandSlideAlert"] = alertStatus;
+    String requestBody;
+    serializeJson(doc, requestBody);
+
+    // Send POST request
+    int httpResponseCode = http.POST(requestBody);
+
+    if (httpResponseCode > 0) {
+        Serial.println("POST Response Code: " + String(httpResponseCode));
+        Serial.println("Response: " + http.getString());
+
+        // Display success message
+        displayMessage("POST Request Sent\nLandslide Alert: " + String(alertStatus ? "TRUE" : "FALSE"));
+    } else {
+        Serial.println("POST request failed. Error: " + String(http.errorToString(httpResponseCode)));
+        displayMessage("POST Request Failed\nError: " + String(http.errorToString(httpResponseCode)));
+    }
+
+    http.end();
+}
+
+void displayMessage(String message) {
+    // Implement your display logic here, e.g., using an OLED display
+    Serial.println(message); // For now, just print to Serial Monitor
+}
